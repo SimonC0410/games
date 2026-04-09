@@ -1,0 +1,4 @@
+@import "tailwindcss";
+
+/* Si usas la versión 5 de DaisyUI (compatible con Tailwind v4) */
+@plugin "daisyui";
