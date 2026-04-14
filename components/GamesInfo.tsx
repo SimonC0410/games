@@ -4,6 +4,9 @@ import { PrismaNeon } from "@prisma/adapter-neon";
 import Image from 'next/image';
 import { redirect } from "next/navigation"
 import SearchInput from "./SearchInput"
+import ConsoleFilter from "./ConsoleFilter"
+import fs from "fs/promises"
+import path from "path"
 
 const prisma = new PrismaClient({
     adapter: new PrismaNeon({
@@ -16,27 +19,36 @@ async function deleteGame(formData: FormData) {
     const id = Number(formData.get("id"))
     const game = await prisma.game.findUnique({ where: { id } })
     if (!game) return
+
+    if (game.cover && game.cover !== "no-cover.png") {
+        const imagePath = path.join(process.cwd(), "public", "img", game.cover)
+        try {
+            await fs.unlink(imagePath)
+        } catch (err) {
+            console.error("No se pudo eliminar la imagen:", err)
+        }
+    }
+
     await prisma.game.delete({ where: { id } })
     redirect("/games")
 }
-
-const GAMES_PER_PAGE = 10  // 👈 constante fácil de cambiar
+const GAMES_PER_PAGE = 10
 
 export default async function GamesInfo({
     searchParams,
 }: {
-    searchParams: { search?: string; page?: string }
+    searchParams: { search?: string; page?: string; console?: string }
 }) {
     const search = searchParams?.search ?? ""
-    const currentPage = Math.max(1, Number(searchParams?.page ?? "1"))  // mínimo página 1
+    const consoleId = searchParams?.console ? Number(searchParams.console) : undefined
+    const currentPage = Math.max(1, Number(searchParams?.page ?? "1"))
     const skip = (currentPage - 1) * GAMES_PER_PAGE
 
-    const where = search
-        ? { title: { contains: search, mode: "insensitive" as const } }
-        : undefined
+    const where: any = {}
+    if (search) where.title = { contains: search, mode: "insensitive" }
+    if (consoleId) where.console_id = consoleId  // ✅ nombre correcto del campo
 
-    // 👈 Dos queries en paralelo: juegos de la página actual + total
-    const [games, totalGames] = await Promise.all([
+    const [games, totalGames, consoles] = await Promise.all([
         prisma.game.findMany({
             where,
             include: { console: true },
@@ -44,15 +56,16 @@ export default async function GamesInfo({
             take: GAMES_PER_PAGE,
             orderBy: { id: "asc" }
         }),
-        prisma.game.count({ where })
+        prisma.game.count({ where }),
+        prisma.console.findMany({ orderBy: { name: "asc" } })
     ])
 
     const totalPages = Math.ceil(totalGames / GAMES_PER_PAGE)
 
-    // Construir URL manteniendo el search param si existe
     const buildUrl = (page: number) => {
         const params = new URLSearchParams()
         if (search) params.set("search", search)
+        if (consoleId) params.set("console", String(consoleId))
         params.set("page", String(page))
         return `/games?${params.toString()}`
     }
@@ -60,8 +73,9 @@ export default async function GamesInfo({
     return (
         <div>
             <h1 className='text-4xl text-purple-400 border-b-2 pb-2 mb-8'>Games</h1>
-            <div className="flex justify-center items-center mb-10 gap-10">
+            <div className="flex justify-center items-center mb-10 gap-4 flex-wrap">
                 <SearchInput />
+                <ConsoleFilter consoles={consoles} />
                 <Link href={"/games/add"}>
                     <button className="btn btn-outline btn-success">Add</button>
                 </Link>
@@ -100,7 +114,6 @@ export default async function GamesInfo({
                                 <Link href={`/games/show/${game.id}`}>
                                     <div className="btn btn-outline btn-info">View</div>
                                 </Link>
-
                                 <label htmlFor={`delete_modal_${game.id}`} className="btn btn-outline btn-error">
                                     Delete
                                 </label>
@@ -127,19 +140,14 @@ export default async function GamesInfo({
                 ))}
             </div>
 
-            {/* 👇 Paginación */}
             {totalPages > 1 && (
                 <div className="flex justify-center items-center gap-2 mt-10">
-
-                    {/* Botón anterior */}
                     <Link
                         href={buildUrl(currentPage - 1)}
                         className={`btn btn-outline btn-purple-400 ${currentPage === 1 ? "btn-disabled" : ""}`}
                     >
                         «
                     </Link>
-
-                    {/* Números de página */}
                     {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
                         <Link key={page} href={buildUrl(page)}>
                             <button
@@ -152,19 +160,15 @@ export default async function GamesInfo({
                             </button>
                         </Link>
                     ))}
-
-                    {/* Botón siguiente */}
                     <Link
                         href={buildUrl(currentPage + 1)}
                         className={`btn btn-outline ${currentPage === totalPages ? "btn-disabled" : ""}`}
                     >
                         »
                     </Link>
-
                 </div>
             )}
 
-            {/* Info de resultados */}
             <p className="text-center text-white/40 text-sm mt-4">
                 Mostrando {skip + 1}–{Math.min(skip + GAMES_PER_PAGE, totalGames)} de {totalGames} juegos
             </p>
